@@ -1,0 +1,8 @@
+__pycache__/
+*/__pycache__/*
+.venv
+.env
+*egg-info
+*.egg*
+params.json
+results.json

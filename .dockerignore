@@ -1,0 +1,15 @@
+# Ignorar arquivos sensíveis e temporários
+.env
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+ENV/
+.pytest_cache/
+.coverage
+
+# Ignorar arquivos Docker temporários
+.dockerignore
