@@ -19,7 +19,7 @@ COPY . .
 RUN mkdir -p /app/uploads
 
 # Expose port
-EXPOSE 8001
+EXPOSE 8002
 
 # Command to run the application
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8001"]
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8002"]

@@ -5,7 +5,7 @@ import os
 
 def main():
     parser = argparse.ArgumentParser(description='Cliente para teste da API de Transcrição de Áudio')
-    parser.add_argument('--url', default='http://localhost:8001', help='URL base da API')
+    parser.add_argument('--url', default='http://localhost:8002', help='URL base da API')
     parser.add_argument('--api-key', required=True, help='API Key para autenticação')
     parser.add_argument('--file', required=True, help='Caminho para o arquivo de áudio')
     parser.add_argument('--idioma', default=None, help='Idioma do áudio (opcional)')

@@ -38,7 +38,7 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
-5. A API estará disponível em `http://seu_ip:PORTA`, onde PORTA é a definida na variável API_PORT (padrão: 8001)
+5. A API estará disponível em `http://seu_ip:PORTA`, onde PORTA é a definida na variável API_PORT (padrão: 8002)
 
 ## Endpoints Principais
 
