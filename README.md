@@ -1,129 +1,61 @@
-# API de Transcrição de Áudio com Whisper
+# Whisper Audio Transcription API
 
-Esta API permite transcrever arquivos de áudio utilizando o modelo Whisper da OpenAI. A API suporta processamento síncrono e assíncrono, gerenciamento de filas e autenticação via API Key.
+API para transcrição de áudio usando o modelo Whisper da OpenAI.
 
 ## Requisitos
 
-- Python 3.8+
-- PostgreSQL 10+
-- CUDA (opcional, para aceleração por GPU)
+- Docker
+- Docker Compose
+- Banco de dados PostgreSQL (já existente)
 
-## Instalação
+## Configuração
 
-1. Clone o repositório:
-
-```bash
-git clone <url-do-repositorio>
-cd whisper
-```
-
-2. Crie um ambiente virtual:
-
-```bash
-python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-# ou
-.venv\Scripts\activate  # Windows
-```
-
-3. Instale as dependências:
-
-```bash
-pip install -r requirements.txt
-```
-
-4. Crie o arquivo `.env` com base no modelo:
+1. Clone este repositório em sua VPS
+2. Copie o arquivo `.env.example` para `.env` e configure as variáveis:
 
 ```bash
 cp .env.example .env
+nano .env
 ```
 
-5. Edite o arquivo `.env` com suas configurações.
+3. Edite o arquivo `.env` com as informações do seu banco de dados PostgreSQL
 
-## Uso
+## Deployment com Docker
 
-### Iniciando a API
+1. Certifique-se de que o Docker e o Docker Compose estejam instalados em sua VPS
+
+2. Configure o banco de dados PostgreSQL e garanta que esteja acessível
+
+3. Execute o comando para iniciar o serviço:
 
 ```bash
-python api.py
+docker-compose up -d
 ```
 
-A API estará disponível em `http://localhost:8001`.
+4. Os logs podem ser verificados com:
 
-### Swagger/OpenAPI
-
-A documentação da API estará disponível em `http://localhost:8001/docs`.
-
-## Endpoints da API
-
-### Transcrição Síncrona
-
-Processa um arquivo de áudio e retorna a transcrição imediatamente.
-
-```
-POST /transcribe
+```bash
+docker-compose logs -f
 ```
 
-### Transcrição Assíncrona
+5. A API estará disponível em `http://seu_ip:8001`
 
-Adiciona um arquivo de áudio à fila para processamento em segundo plano.
+## Endpoints Principais
 
-```
-POST /transcribe/async
-```
+- `POST /transcribe` - Transcrição síncrona (para arquivos pequenos)
+- `POST /transcribe/async` - Transcrição assíncrona (para arquivos maiores)
+- `GET /transcribe/status/{id}` - Verificar status de transcrição assíncrona
 
-### Status da Transcrição
+## Cliente de Teste
 
-Verifica o status e o resultado de uma transcrição assíncrona.
+Um cliente de teste está disponível no arquivo `client.py`:
 
-```
-GET /transcribe/status/{id}
-```
-
-### Gerenciamento de API Keys
-
-Criar uma nova API Key:
-
-```
-POST /admin/api-keys
+```bash
+python client.py --url http://seu_ip:8001 --api-key SUA_API_KEY --file caminho/para/audio.mp3 --modo assincrono
 ```
 
-Listar API Keys:
+## Observações
 
-```
-GET /admin/api-keys
-```
-
-Revogar uma API Key:
-
-```
-POST /admin/api-keys/revoke
-```
-
-## Formatos de Áudio Suportados
-
-- `.mp3`
-- `.mp4`
-- `.mpeg`
-- `.mpga`
-- `.m4a`
-- `.wav`
-- `.webm`
-
-## Notas sobre desempenho
-
-- Para arquivos grandes, é recomendado utilizar a API de transcrição assíncrona.
-- O desempenho da transcrição depende do tamanho do modelo e do hardware utilizado.
-- As configurações do modelo podem ser ajustadas no arquivo `.env`.
-
-## Segurança
-
-Todos os endpoints são protegidos por autenticação via API Key, que deve ser enviada no cabeçalho `X-API-Key` de cada requisição.
-
-## Licença
-
-[Inserir licença aqui]
-
-## Contribuição
-
-[Instruções para contribuição]
+- A API Key é gerada automaticamente na primeira inicialização e mostrada nos logs do contêiner.
+- Os arquivos de áudio são armazenados no diretório `/uploads` que está mapeado como um volume.
+- O banco de dados deve ser criado previamente antes de executar o contêiner.

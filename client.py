@@ -26,8 +26,12 @@ def main():
     
     # Prepara o arquivo e dados para envio
     with open(args.file, 'rb') as f:
+        # Define o content-type correto baseado na extensão do arquivo
+        file_extension = os.path.splitext(args.file)[1].lower()
+        content_type = 'audio/ogg' if file_extension == '.opus' else 'audio/mpeg'
+        
         files = {
-            'file': (os.path.basename(args.file), f, 'audio/mpeg')
+            'file': (os.path.basename(args.file), f, content_type)
         }
         
         data = {}

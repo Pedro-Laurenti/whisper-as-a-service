@@ -6,3 +6,4 @@ __pycache__/
 *.egg*
 params.json
 results.json
+uploads

@@ -1,28 +1,25 @@
-FROM python:3.10.16
+FROM python:3.12-slim
 
 WORKDIR /app
 
-# Instala as dependências do sistema necessárias para compilar algumas bibliotecas Python
+# Install FFmpeg and other dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential \
     ffmpeg \
-    git \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-# Copia os arquivos de requisitos primeiro para aproveitar o cache do Docker
+# Copy requirements file and install Python dependencies
 COPY requirements.txt .
-
-# Instala as dependências
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copia o resto do código
+# Copy application code
 COPY . .
 
-# Cria diretório para uploads se não existir
-RUN mkdir -p /app/uploads && chmod 777 /app/uploads
+# Create uploads directory
+RUN mkdir -p /app/uploads
 
-# Comando para iniciar a API
-CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8001"]
-
+# Expose port
 EXPOSE 8001
+
+# Command to run the application
+CMD ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8001"]

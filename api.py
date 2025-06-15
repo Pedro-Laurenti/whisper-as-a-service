@@ -4,6 +4,8 @@ from pydantic import BaseModel
 import uvicorn
 import asyncio
 import secrets
+import shutil
+import subprocess
 from typing import Optional, List, Dict, Any
 from src.queue_processor import (
     execute_sync_transcription, enqueue_transcription, get_transcription_status,
@@ -15,6 +17,8 @@ from src.security import (
 )
 from contextlib import asynccontextmanager
 import os
+import base64
+import re
 from dotenv import load_dotenv
 import logging
 
@@ -28,8 +32,111 @@ logger = logging.getLogger(__name__)
 # Carregar variáveis de ambiente
 load_dotenv()
 
+def is_base64(s):
+    """
+    Verifica se uma string é base64 válida
+    
+    Args:
+        s (str): String a ser verificada
+        
+    Returns:
+        bool: True se a string for base64 válida, False caso contrário
+    """
+    try:
+        # Verifica se a string é válida como base64
+        if not isinstance(s, str):
+            return False
+        
+        # Remove possíveis prefixos de data URI
+        if s.startswith('data:'):
+            s = s.split(',', 1)[1]
+        
+        # Tenta decodificar e verifica se é um áudio
+        decoded = base64.b64decode(s)
+        # Verificação básica se pode ser um arquivo de áudio (tem pelo menos alguns bytes)
+        return len(decoded) > 100
+    except Exception:
+        return False
+
+def decode_base64_to_audio(base64_string):
+    """
+    Decodifica uma string base64 para bytes de áudio
+    
+    Args:
+        base64_string (str): String base64 para decodificar
+        
+    Returns:
+        bytes: Bytes do áudio decodificado
+    """
+    # Remove possíveis prefixos de data URI
+    if base64_string.startswith('data:'):
+        base64_string = base64_string.split(',', 1)[1]
+    
+    # Decodifica a string base64 para bytes
+    return base64.b64decode(base64_string)
+
+def get_ffmpeg_install_command():
+    """
+    Retorna o comando para instalar ffmpeg com base no sistema operacional
+    
+    Returns:
+        str: Comando de instalação para ffmpeg
+    """
+    import platform
+    
+    system = platform.system().lower()
+    
+    if system == "linux":
+        # Tenta detectar a distribuição Linux
+        try:
+            with open("/etc/os-release") as f:
+                os_info = {}
+                for line in f:
+                    if "=" in line:
+                        k, v = line.rstrip().split("=", 1)
+                        os_info[k] = v.strip('"')
+            
+            if "ID" in os_info:
+                distro = os_info["ID"].lower()
+                if distro in ["ubuntu", "debian", "linuxmint"]:
+                    return "sudo apt update && sudo apt install -y ffmpeg"
+                elif distro in ["fedora", "rhel", "centos"]:
+                    return "sudo dnf install -y ffmpeg"
+                elif distro in ["arch", "manjaro"]:
+                    return "sudo pacman -S ffmpeg"
+                elif distro == "opensuse":
+                    return "sudo zypper install ffmpeg"
+        except Exception:
+            pass
+        
+        # Caso não consiga detectar a distribuição específica
+        return "Instale o ffmpeg usando o gerenciador de pacotes da sua distribuição Linux"
+    
+    elif system == "darwin":  # macOS
+        return "brew install ffmpeg"
+    
+    elif system == "windows":
+        return "winget install ffmpeg (ou baixe em https://ffmpeg.org/download.html)"
+    
+    else:
+        return "Baixe o ffmpeg em https://ffmpeg.org/download.html"
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Verifica se ffmpeg está instalado no sistema
+    ffmpeg_installed = shutil.which("ffmpeg") is not None
+    if not ffmpeg_installed:
+        install_cmd = get_ffmpeg_install_command()
+        print(f"\n{'='*60}")
+        print(f" ERRO: ffmpeg não encontrado!")
+        print(f" O Whisper requer ffmpeg para processar áudios.")
+        print(f" Por favor, instale ffmpeg usando o comando:")
+        print(f" {install_cmd}")
+        print(f"{'='*60}\n")
+        logger.error("ffmpeg não encontrado! A API não funcionará corretamente sem ffmpeg instalado.")
+    else:
+        logger.info("ffmpeg encontrado no sistema.")
+
     # Inicializa o modelo Whisper na inicialização
     await inicializar_modelo()
     
@@ -67,6 +174,10 @@ async def lifespan(app: FastAPI):
         print(f" Expira em: {key_info['expires_at']}")
         print(f"{'='*60}\n")
     
+    # Verifica se o ffmpeg está disponível
+    if not shutil.which("ffmpeg"):
+        logger.warning("O ffmpeg não está instalado ou não está no PATH do sistema. Algumas funcionalidades podem não funcionar corretamente.")
+    
     logger.info("Sistema de Transcrição de Áudio iniciado!")
     yield
     logger.info("Sistema de Transcrição de Áudio encerrado!")
@@ -82,6 +193,11 @@ api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 class TranscriptionRequest(BaseModel):
     idioma: Optional[str] = None
+    
+class AudioTranscriptionRequest(BaseModel):
+    audio: str  # Conteúdo do áudio em base64
+    nome_arquivo: Optional[str] = "audio.opus"  # Nome do arquivo, com extensão
+    idioma: Optional[str] = None  # Idioma do áudio (opcional)
 
 class APIKeyRequest(BaseModel):
     name: str
@@ -93,45 +209,95 @@ class RevokeRequest(BaseModel):
 
 @app.post("/transcribe")
 async def transcribe(
-    file: UploadFile = File(...),
+    request: Request,
+    file: Optional[UploadFile] = File(None),
     idioma: Optional[str] = Form(None),
     api_key: str = Security(api_key_header)
 ):
     """
     Executa uma transcrição síncrona (bloqueante) e retorna os resultados diretamente.
     Ideal para arquivos pequenos que não exigem muito tempo de processamento.
+    Aceita tanto arquivo upload quanto JSON com áudio em base64.
     
     Requer uma API Key válida no cabeçalho X-API-Key.
     """
     try:
-        # Verifica se o arquivo é um tipo de áudio suportado
-        file_extension = os.path.splitext(file.filename)[1].lower()
-        supported_extensions = ['.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm']
+        # Verifica se é uma requisição JSON (base64) ou multipart (upload de arquivo)
+        content_type = request.headers.get('content-type', '')
         
-        if file_extension not in supported_extensions:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Formato de arquivo não suportado. Formatos suportados: {', '.join(supported_extensions)}"
-            )
-        
-        # Lê o conteúdo do arquivo
-        audio_bytes = await file.read()
+        if content_type.startswith('application/json'):
+            # Processa como JSON com áudio em base64
+            data = await request.json()
+            if not isinstance(data, dict) or 'audio' not in data:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Formato JSON inválido. Esperado campo 'audio' com conteúdo em base64."
+                )
+            
+            audio_base64 = data.get('audio')
+            nome_arquivo = data.get('nome_arquivo', 'audio.opus')
+            idioma_param = data.get('idioma', idioma)
+            
+            # Verifica e decodifica o áudio em base64
+            if not is_base64(audio_base64):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Conteúdo de áudio base64 inválido."
+                )
+            
+            # Decodifica o base64 para bytes
+            audio_bytes = decode_base64_to_audio(audio_base64)
+            
+        else:
+            # Processa como upload de arquivo
+            if not file:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, 
+                    detail="Nenhum arquivo enviado ou formato de requisição inválido"
+                )
+            
+            # Verifica se o arquivo é um tipo de áudio suportado
+            file_extension = os.path.splitext(file.filename)[1].lower()
+            supported_extensions = ['.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm', '.opus']
+            
+            if file_extension not in supported_extensions:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Formato de arquivo não suportado. Formatos suportados: {', '.join(supported_extensions)}"
+                )
+            
+            # Lê o conteúdo do arquivo
+            audio_bytes = await file.read()
+            nome_arquivo = file.filename
+            idioma_param = idioma
         
         # Usa a função do queue_processor para executar a transcrição síncrona
-        results = await execute_sync_transcription(
-            audio_bytes=audio_bytes,
-            nome_arquivo=file.filename,
-            idioma=idioma
-        )
-        
-        return results
+        try:
+            results = await execute_sync_transcription(
+                audio_bytes=audio_bytes,
+                nome_arquivo=nome_arquivo,
+                idioma=idioma_param
+            )
+            
+            return results
+        except FileNotFoundError as e:
+            if "ffmpeg" in str(e):
+                install_cmd = get_ffmpeg_install_command()
+                error_detail = f"ffmpeg não encontrado. Por favor, instale ffmpeg usando o comando: {install_cmd}"
+                logger.error(error_detail)
+                raise HTTPException(status_code=500, detail=error_detail)
+            else:
+                raise HTTPException(status_code=500, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Erro na transcrição síncrona: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/transcribe/async")
 async def transcribe_async(
-    file: UploadFile = File(...),
+    request: Request,
+    file: Optional[UploadFile] = File(None),
     idioma: Optional[str] = Form(None),
     api_key: str = Security(api_key_header)
 ):
@@ -139,31 +305,77 @@ async def transcribe_async(
     Adiciona um arquivo de áudio à fila de processamento para ser transcrito de forma assíncrona.
     Retorna imediatamente com um ID de transcrição para verificação posterior.
     Ideal para arquivos maiores que podem demorar mais tempo para processar.
+    Aceita tanto arquivo upload quanto JSON com áudio em base64.
     
     Requer uma API Key válida no cabeçalho X-API-Key.
     """
     try:
-        # Verifica se o arquivo é um tipo de áudio suportado
-        file_extension = os.path.splitext(file.filename)[1].lower()
-        supported_extensions = ['.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm']
+        # Verifica se é uma requisição JSON (base64) ou multipart (upload de arquivo)
+        content_type = request.headers.get('content-type', '')
         
-        if file_extension not in supported_extensions:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Formato de arquivo não suportado. Formatos suportados: {', '.join(supported_extensions)}"
-            )
+        if content_type.startswith('application/json'):
+            # Processa como JSON com áudio em base64
+            data = await request.json()
+            if not isinstance(data, dict) or 'audio' not in data:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Formato JSON inválido. Esperado campo 'audio' com conteúdo em base64."
+                )
+            
+            audio_base64 = data.get('audio')
+            nome_arquivo = data.get('nome_arquivo', 'audio.opus')
+            idioma_param = data.get('idioma', idioma)
+            
+            # Verifica e decodifica o áudio em base64
+            if not is_base64(audio_base64):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Conteúdo de áudio base64 inválido."
+                )
+            
+            # Decodifica o base64 para bytes
+            audio_bytes = decode_base64_to_audio(audio_base64)
+            
+        else:
+            # Processa como upload de arquivo
+            if not file:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST, 
+                    detail="Nenhum arquivo enviado ou formato de requisição inválido"
+                )
+            
+            # Verifica se o arquivo é um tipo de áudio suportado
+            file_extension = os.path.splitext(file.filename)[1].lower()
+            supported_extensions = ['.mp3', '.mp4', '.mpeg', '.mpga', '.m4a', '.wav', '.webm', '.opus']
+            
+            if file_extension not in supported_extensions:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Formato de arquivo não suportado. Formatos suportados: {', '.join(supported_extensions)}"
+                )
+            
+            # Lê o conteúdo do arquivo
+            audio_bytes = await file.read()
+            nome_arquivo = file.filename
+            idioma_param = idioma
         
-        # Lê o conteúdo do arquivo
-        audio_bytes = await file.read()
+        # Verifica se o ffmpeg está instalado antes de enfileirar
+        if not shutil.which("ffmpeg"):
+            install_cmd = get_ffmpeg_install_command()
+            error_detail = f"ffmpeg não encontrado. Por favor, instale ffmpeg usando o comando: {install_cmd}"
+            logger.error(error_detail)
+            raise HTTPException(status_code=500, detail=error_detail)
         
         # Adiciona a transcrição à fila de processamento
         result = await enqueue_transcription(
             audio_bytes=audio_bytes,
-            nome_arquivo=file.filename,
-            idioma=idioma
+            nome_arquivo=nome_arquivo,
+            idioma=idioma_param
         )
         
         return result
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Erro ao enfileirar transcrição: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))

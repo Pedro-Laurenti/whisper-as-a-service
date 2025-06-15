@@ -1,44 +1,24 @@
 version: '3.8'
 
 services:
-  postgres:
-    image: postgres:15
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: whisper_db
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres-data:/var/lib/postgresql/data
-      - ./docs/BD.SQL:/docker-entrypoint-initdb.d/init.sql
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-  
-  api:
+  whisper-api:
     build:
       context: .
       dockerfile: Dockerfile
+    container_name: whisper-api
+    restart: unless-stopped
     ports:
       - "8001:8001"
     volumes:
-      - .:/app
       - ./uploads:/app/uploads
-    depends_on:
-      postgres:
-        condition: service_healthy
     environment:
-      - DB_HOST=postgres
-      - DB_PORT=5432
-      - DB_NAME=whisper_db
-      - DB_USER=postgres
-      - DB_PASS=postgres
-      - WHISPER_MODEL=base
+      - DB_HOST=${DB_HOST:-postgres}
+      - DB_PORT=${DB_PORT:-5432}
+      - DB_NAME=${DB_NAME:-whisper_db}
+      - DB_USER=${DB_USER:-postgres}
+      - DB_PASS=${DB_PASS:-postgres}
       - UPLOAD_DIR=/app/uploads
-    command: ["uvicorn", "api:app", "--host", "0.0.0.0", "--port", "8001", "--reload"]
-
-volumes:
-  postgres-data:
+      - WHISPER_MODEL=${WHISPER_MODEL:-base}
+      - DEFAULT_API_KEY_NAME=${DEFAULT_API_KEY_NAME:-API Default}
+      - DEFAULT_API_KEY_EXPIRES_DAYS=${DEFAULT_API_KEY_EXPIRES_DAYS:-365}
+      - DEFAULT_API_KEY_ALLOWED_IPS=${DEFAULT_API_KEY_ALLOWED_IPS:-}

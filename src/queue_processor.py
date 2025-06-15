@@ -139,6 +139,11 @@ async def execute_sync_transcription(audio_bytes: bytes, nome_arquivo: str, idio
     if model is None:
         await inicializar_modelo()
     
+    # Verifica se o ffmpeg está instalado
+    import shutil
+    if shutil.which("ffmpeg") is None:
+        raise FileNotFoundError("ffmpeg não encontrado no sistema. Por favor instale ffmpeg para processar áudios.")
+    
     # Salva o arquivo em um diretório temporário
     with tempfile.NamedTemporaryFile(suffix=f"_{nome_arquivo}", delete=False) as temp:
         temp.write(audio_bytes)
@@ -219,6 +224,11 @@ async def processa_transcrição(transcricao_id: int):
             # Garante que o modelo está inicializado
             if model is None:
                 await inicializar_modelo()
+            
+            # Verifica se o ffmpeg está instalado
+            import shutil
+            if shutil.which("ffmpeg") is None:
+                raise FileNotFoundError("ffmpeg não encontrado no sistema. Por favor instale ffmpeg para processar áudios.")
             
             # Lê o arquivo
             caminho_arquivo = transcricao["caminho_arquivo"]
