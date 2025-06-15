@@ -3,10 +3,9 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: whisper-api
     restart: unless-stopped
     ports:
-      - "8001:8001"
+      - "${API_PORT:-8002}:8002"
     volumes:
       - ./uploads:/app/uploads
     environment:

@@ -38,7 +38,7 @@ docker-compose up -d
 docker-compose logs -f
 ```
 
-5. A API estará disponível em `http://seu_ip:8001`
+5. A API estará disponível em `http://seu_ip:PORTA`, onde PORTA é a definida na variável API_PORT (padrão: 8001)
 
 ## Endpoints Principais
 
@@ -51,8 +51,10 @@ docker-compose logs -f
 Um cliente de teste está disponível no arquivo `client.py`:
 
 ```bash
-python client.py --url http://seu_ip:8001 --api-key SUA_API_KEY --file caminho/para/audio.mp3 --modo assincrono
+python client.py --url http://seu_ip:PORTA --api-key SUA_API_KEY --file caminho/para/audio.mp3 --modo assincrono
 ```
+
+Substitua PORTA pela porta configurada na variável API_PORT no arquivo .env
 
 ## Observações
 
