@@ -452,4 +452,6 @@ async def revoke_key(request: RevokeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
-    uvicorn.run("api:app", host="0.0.0.0", port=8002, reload=True)
+    # Obter a porta da variável de ambiente API_PORT ou usar 8002 como padrão
+    api_port = int(os.getenv("API_PORT", "8002"))
+    uvicorn.run("api:app", host="0.0.0.0", port=api_port, reload=True)

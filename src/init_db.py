@@ -6,79 +6,47 @@ from dotenv import load_dotenv
 # Carrega variáveis de ambiente
 load_dotenv()
 
+# Configurações de conexão ao banco de dados existente
 DB_HOST = os.getenv("DB_HOST", "localhost")
 DB_PORT = int(os.getenv("DB_PORT", "5432"))
 DB_NAME = os.getenv("DB_NAME", "whisper_db")
 DB_USER = os.getenv("DB_USER", "postgres")
 DB_PASS = os.getenv("DB_PASS", "postgres")
 
-async def init_db():
-    print(f"Conectando ao banco de dados PostgreSQL ({DB_HOST}:{DB_PORT}, DB: {DB_NAME})...")
+async def get_db_conn():
+    """
+    Função para obter uma conexão com o banco de dados.
+    Usa as configurações de ambiente para se conectar ao banco existente.
     
-    # Conecta primeiro ao banco de dados 'postgres' para poder criar o banco whisper_db caso não exista
-    conn = await asyncpg.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        user=DB_USER,
-        password=DB_PASS,
-        database="postgres"
-    )
-    
-    # Verifica se o banco de dados já existe
-    exists = await conn.fetchval(
-        "SELECT EXISTS(SELECT 1 FROM pg_database WHERE datname = $1)",
-        DB_NAME
-    )
-    
-    # Se não existir, cria o banco de dados
-    if not exists:
-        print(f"Criando o banco de dados '{DB_NAME}'...")
-        await conn.execute(f"CREATE DATABASE {DB_NAME}")
-    
-    await conn.close()
-    
-    # Agora conecta ao banco de dados que acabamos de criar/verificar
-    conn = await asyncpg.connect(
+    Returns:
+        Conexão com o banco de dados PostgreSQL
+    """
+    return await asyncpg.connect(
         host=DB_HOST,
         port=DB_PORT,
         user=DB_USER,
         password=DB_PASS,
         database=DB_NAME
     )
-    
-    # Cria as tabelas se não existirem
-    schema_sql = """
-    CREATE TABLE IF NOT EXISTS transcricoes (
-        id SERIAL PRIMARY KEY,
-        nome_arquivo TEXT NOT NULL,
-        caminho_arquivo TEXT NOT NULL,
-        duracao INTEGER,
-        idioma TEXT,
-        data_envio TIMESTAMP DEFAULT now(),
-        data_processamento TIMESTAMP,
-        status TEXT CHECK (status IN ('waiting', 'processing', 'error', 'concluido')),
-        texto TEXT,
-        api_key_id INTEGER
-    );
 
-    CREATE TABLE IF NOT EXISTS api_keys (
-        id SERIAL PRIMARY KEY,
-        key_hash TEXT NOT NULL UNIQUE,
-        name TEXT NOT NULL,
-        created_at TIMESTAMP NOT NULL DEFAULT NOW(),
-        expires_at TIMESTAMP,
-        is_active BOOLEAN NOT NULL DEFAULT TRUE,
-        last_used_at TIMESTAMP,
-        use_count INTEGER NOT NULL DEFAULT 0,
-        allowed_ips TEXT[]
-    );
+async def test_connection():
     """
+    Testa a conexão com o banco de dados.
+    Útil para verificar se as configurações estão corretas.
+    """
+    print(f"Testando conexão ao banco de dados PostgreSQL ({DB_HOST}:{DB_PORT}, DB: {DB_NAME})...")
     
-    await conn.execute(schema_sql)
-    print("Tabelas verificadas/criadas com sucesso!")
-    
-    await conn.close()
-    print("Inicialização do banco de dados concluída!")
+    try:
+        # Tenta estabelecer uma conexão
+        conn = await get_db_conn()
+        await conn.execute("SELECT 1")  # Consulta simples para testar a conexão
+        await conn.close()
+        print("Conexão ao banco de dados estabelecida com sucesso!")
+        return True
+    except Exception as e:
+        print(f"Erro ao conectar ao banco de dados: {str(e)}")
+        return False
 
 if __name__ == "__main__":
-    asyncio.run(init_db())
+    # Quando executado diretamente, apenas testa a conexão
+    asyncio.run(test_connection())

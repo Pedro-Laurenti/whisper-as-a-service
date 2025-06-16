@@ -6,23 +6,11 @@ import asyncpg
 import datetime
 from ipaddress import ip_address, ip_network
 from dotenv import load_dotenv
+from src.init_db import get_db_conn
 
 load_dotenv()
 
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = int(os.getenv("DB_PORT", "5432"))
-DB_NAME = os.getenv("DB_NAME", "whisper_db")
-DB_USER = os.getenv("DB_USER", "postgres")
-DB_PASS = os.getenv("DB_PASS", "postgres")
-
-async def get_db_conn():
-    return await asyncpg.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        user=DB_USER,
-        password=DB_PASS,
-        database=DB_NAME
-    )
+# Variáveis de conexão com o banco de dados são importadas do módulo init_db
 
 def hash_api_key(key: str) -> str:
     """Cria um hash da API Key para armazenamento seguro."""

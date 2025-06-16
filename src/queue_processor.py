@@ -8,6 +8,7 @@ import whisper
 import tempfile
 from dotenv import load_dotenv
 import logging
+from src.init_db import get_db_conn
 
 # Configurar logging
 logging.basicConfig(
@@ -35,29 +36,42 @@ WHISPER_MODEL = os.getenv("WHISPER_MODEL", "base")
 # Inicialização do modelo Whisper
 model = None
 
-async def get_db_conn():
-    """Obtém uma conexão com o banco de dados"""
-    return await asyncpg.connect(
-        host=DB_HOST,
-        port=DB_PORT,
-        user=DB_USER,
-        password=DB_PASS,
-        database=DB_NAME
-    )
+# A função get_db_conn agora é importada do módulo init_db
 
 async def inicializar_modelo():
     """
     Inicializa o modelo Whisper em uma thread separada para não bloquear a thread principal.
+    Inclui mecanismo de retry em caso de falha.
     """
     global model
     
-    logger.info(f"Carregando modelo Whisper '{WHISPER_MODEL}'...")
-    loop = asyncio.get_event_loop()
+    max_attempts = 3
+    current_attempt = 0
     
-    # Inicializando o modelo em uma thread separada
-    model = await loop.run_in_executor(None, lambda: whisper.load_model(WHISPER_MODEL))
+    while current_attempt < max_attempts:
+        current_attempt += 1
+        try:
+            logger.info(f"Carregando modelo Whisper '{WHISPER_MODEL}' (tentativa {current_attempt}/{max_attempts})...")
+            loop = asyncio.get_event_loop()
+            
+            # Inicializando o modelo em uma thread separada
+            model = await loop.run_in_executor(None, lambda: whisper.load_model(WHISPER_MODEL))
+            
+            if model:
+                logger.info(f"Modelo Whisper '{WHISPER_MODEL}' carregado com sucesso!")
+                return model
+            else:
+                logger.error(f"Falha ao carregar o modelo Whisper (resultado nulo)")
+        except Exception as e:
+            logger.error(f"Erro ao carregar modelo Whisper: {str(e)}")
+            if current_attempt < max_attempts:
+                wait_time = 5 * current_attempt  # Aumenta o tempo de espera entre tentativas
+                logger.info(f"Tentando novamente em {wait_time} segundos...")
+                await asyncio.sleep(wait_time)
+            else:
+                logger.error(f"Falha ao inicializar o modelo Whisper após {max_attempts} tentativas")
+                raise
     
-    logger.info(f"Modelo Whisper '{WHISPER_MODEL}' carregado com sucesso!")
     return model
 
 async def salvar_arquivo_audio(audio_bytes: bytes, nome_arquivo: str) -> str:
@@ -223,7 +237,10 @@ async def processa_transcrição(transcricao_id: int):
         try:
             # Garante que o modelo está inicializado
             if model is None:
+                logger.info(f"Modelo não inicializado para transcrição ID {transcricao_id}. Inicializando...")
                 await inicializar_modelo()
+                if model is None:
+                    raise RuntimeError("Falha ao inicializar o modelo Whisper")
             
             # Verifica se o ffmpeg está instalado
             import shutil
@@ -233,48 +250,66 @@ async def processa_transcrição(transcricao_id: int):
             # Lê o arquivo
             caminho_arquivo = transcricao["caminho_arquivo"]
             
+            # Verifica se o arquivo existe
+            if not os.path.exists(caminho_arquivo):
+                raise FileNotFoundError(f"Arquivo não encontrado: {caminho_arquivo}")
+            
             # Inicializa os parâmetros de transcrição
             transcribe_options = {}
             if transcricao["idioma"]:
                 transcribe_options["language"] = transcricao["idioma"]
             
+            # Log para debug
+            logger.info(f"Iniciando transcrição do arquivo {caminho_arquivo} (ID: {transcricao_id})")
+            
             # Executa a transcrição em uma thread separada
             loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: model.transcribe(caminho_arquivo, **transcribe_options)
-            )
-            
-            # Atualiza o resultado no banco de dados
-            await conn.execute(
-                """
-                UPDATE transcricoes
-                SET status = 'concluido',
-                    texto = $1,
-                    idioma = $2,
-                    duracao = $3
-                WHERE id = $4
-                """,
-                result.get("text"),
-                result.get("language"),
-                result.get("duration", 0),
-                transcricao_id
-            )
-            
-            logger.info(f"Transcrição ID {transcricao_id} concluída com sucesso!")
+            try:
+                result = await loop.run_in_executor(
+                    None,
+                    lambda: model.transcribe(caminho_arquivo, **transcribe_options)
+                )
+                
+                if not result or not isinstance(result, dict):
+                    raise ValueError("Resultado da transcrição inválido ou vazio")
+                
+                # Atualiza o resultado no banco de dados
+                await conn.execute(
+                    """
+                    UPDATE transcricoes
+                    SET status = 'concluido',
+                        texto = $1,
+                        idioma = $2,
+                        duracao = $3
+                    WHERE id = $4
+                    """,
+                    result.get("text"),
+                    result.get("language"),
+                    result.get("duration", 0),
+                    transcricao_id
+                )
+                
+                logger.info(f"Transcrição ID {transcricao_id} concluída com sucesso!")
+            except Exception as transcribe_error:
+                logger.error(f"Erro durante a transcrição ID {transcricao_id}: {str(transcribe_error)}")
+                raise transcribe_error
             
         except Exception as e:
             logger.error(f"Erro ao processar transcrição ID {transcricao_id}: {str(e)}")
             
-            # Atualiza status para 'error'
+            # Atualiza status para 'error' com informações do erro
             await conn.execute(
                 """
                 UPDATE transcricoes
-                SET status = 'error'
-                WHERE id = $1
+                SET status = 'error',
+                    texto = $1
+                WHERE id = $2
                 """,
+                f"Erro: {str(e)}",
                 transcricao_id
             )
+            # Re-lança a exceção para que seja tratada pelo chamador
+            raise
     finally:
         await conn.close()
 
@@ -349,7 +384,16 @@ async def processar_fila():
                 
                 if transcricao:
                     # Processa a transcrição
-                    await processa_transcrição(transcricao["id"])
+                    try:
+                        await processa_transcrição(transcricao["id"])
+                        # Adiciona um pequeno atraso entre processamentos para garantir 
+                        # a estabilidade dos recursos
+                        await asyncio.sleep(1)
+                    except Exception as e:
+                        logger.error(f"Erro ao processar transcrição ID {transcricao['id']}: {str(e)}")
+                        # Não interrompe o processador de fila em caso de erro em um item
+                        # Aguarda um pouco antes de processar o próximo para dar tempo de recursos se recuperarem
+                        await asyncio.sleep(3)
                 else:
                     # Se não houver transcrições pendentes, aguarda um pouco
                     await asyncio.sleep(5)
@@ -358,6 +402,13 @@ async def processar_fila():
                 
         except Exception as e:
             logger.error(f"Erro no processador de fila: {str(e)}")
+            # Reinicializa o modelo em caso de erro grave
+            try:
+                global model
+                model = None
+                await inicializar_modelo()
+            except Exception as model_error:
+                logger.error(f"Falha ao reinicializar o modelo: {str(model_error)}")
             await asyncio.sleep(10)  # Aguarda um pouco mais se ocorrer um erro
 
 async def start_queue_processor():

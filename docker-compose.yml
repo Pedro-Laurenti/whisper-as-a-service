@@ -4,6 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    ports:
+      - "8002:8002"
     volumes:
       - ./uploads:/app/uploads
     environment:

@@ -22,23 +22,49 @@ nano .env
 
 ## Deployment com Docker
 
-1. Certifique-se de que o Docker e o Docker Compose estejam instalados em sua VPS
-
-2. Configure o banco de dados PostgreSQL e garanta que esteja acessível
-
-3. Execute o comando para iniciar o serviço:
-
 ```bash
 docker-compose up -d
 ```
 
-4. Os logs podem ser verificados com:
+### Ver logs dos serviços
+
+Para ver os logs de todos os serviços:
 
 ```bash
 docker-compose logs -f
 ```
 
-5. A API estará disponível em `http://seu_ip:PORTA`, onde PORTA é a definida na variável API_PORT (padrão: 8002)
+### Parar os serviços
+
+```bash
+docker-compose down
+```
+
+## Reconstruindo após alterações no código
+
+Se você fez alterações no código-fonte, é necessário reconstruir as imagens:
+
+```bash
+# Pare os containers
+docker-compose down
+
+# Reconstrua sem usar cache
+docker-compose build --no-cache
+
+# Inicie novamente
+docker-compose up -d
+
+# Verifique os logs para confirmar que está funcionando corretamente
+docker-compose logs -f
+```
+
+Para aplicar apenas as alterações do arquivo .env sem reiniciar completamente:
+
+```bash
+docker-compose down
+docker-compose up -d
+```
+A API estará disponível em `http://seu_ip:PORTA`, onde PORTA é a definida na variável API_PORT (padrão: 8002)
 
 ## Endpoints Principais
 
