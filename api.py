@@ -12,8 +12,7 @@ from src.queue_processor import (
     start_queue_processor, inicializar_modelo
 )
 from src.security import (
-    get_api_key, generate_api_key, 
-    revoke_api_key, get_api_keys
+    get_api_key
 )
 from contextlib import asynccontextmanager
 import os
@@ -143,36 +142,8 @@ async def lifespan(app: FastAPI):
     # Iniciar o processador de fila
     await start_queue_processor()
     
-    # Verifica se existe alguma API Key ativa
-    keys = await get_api_keys(active_only=True)
-    
-    # Se não existir nenhuma API Key ativa, cria uma padrão
-    if not keys:
-        # Recarrega as variáveis de ambiente para garantir que temos os valores mais recentes
-        load_dotenv()
-        
-        # Obtém configurações do arquivo .env
-        default_name = os.getenv("DEFAULT_API_KEY_NAME", "API Default")
-        default_expires = int(os.getenv("DEFAULT_API_KEY_EXPIRES_DAYS", "365"))
-        default_ips_str = os.getenv("DEFAULT_API_KEY_ALLOWED_IPS", "")
-        
-        # Converte string de IPs para lista (se não estiver vazia)
-        default_ips = [ip.strip() for ip in default_ips_str.split(",")] if default_ips_str else None
-        
-        # Cria a API Key padrão
-        key_info = await generate_api_key(
-            name=default_name,
-            expires_days=default_expires,
-            allowed_ips=default_ips
-        )
-        
-        print(f"\n{'='*60}")
-        print(f" API KEY GERADA: {key_info['api_key']}")
-        print(f" GUARDE ESTA CHAVE EM LOCAL SEGURO!")
-        print(f" Nome: {key_info['name']}")
-        print(f" Criada em: {key_info['created_at']}")
-        print(f" Expira em: {key_info['expires_at']}")
-        print(f"{'='*60}\n")
+    # NOTA: A criação de API Keys agora é gerenciada pelo serviço separado "api-keys-manager"
+    # Se precisar criar uma API Key, use o serviço dedicado
     
     # Verifica se o ffmpeg está disponível
     if not shutil.which("ffmpeg"):
@@ -224,14 +195,6 @@ class AudioTranscriptionRequest(BaseModel):
     audio: str  # Conteúdo do áudio em base64
     nome_arquivo: Optional[str] = "audio.opus"  # Nome do arquivo, com extensão
     idioma: Optional[str] = None  # Idioma do áudio (opcional)
-
-class APIKeyRequest(BaseModel):
-    name: str
-    expires_days: Optional[int] = 365  # Validade em dias, padrão de 1 ano
-    allowed_ips: Optional[List[str]] = None  # Lista de IPs permitidos (opcional)
-
-class RevokeRequest(BaseModel):
-    key_id: int
 
 @app.post("/transcribe")
 async def transcribe(
@@ -423,76 +386,8 @@ async def get_transcribe_status(transcricao_id: int, request: Request, api_key: 
         logger.error(f"Erro ao verificar status da transcrição: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-# Adicionando verificação de IP de administração
-async def verify_admin_access(request: Request):
-    """
-    Verifica se a solicitação tem acesso de administração.
-    Pode ser expandido para incluir autenticação adicional.
-    """
-    # Lista de IPs permitidos para acesso administrativo
-    allowed_admin_ips = os.getenv("ADMIN_ALLOWED_IPS", "127.0.0.1,::1").split(",")
-    client_ip = request.client.host
-    
-    # Verifica se o IP do cliente está na lista de IPs permitidos
-    if client_ip not in [ip.strip() for ip in allowed_admin_ips]:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Acesso negado. IP não autorizado para acesso administrativo."
-        )
-    
-    return True
-
-# Endpoints para gerenciar API Keys (com proteção especial)
-@app.post("/admin/api-keys", status_code=status.HTTP_201_CREATED)
-async def create_key(request: Request, api_key_request: APIKeyRequest, _: bool = Depends(verify_admin_access)):
-    """
-    Cria uma nova API Key.
-    
-    Este endpoint deve ser protegido por senha ou estar em uma rede segura.
-    Em um ambiente de produção, seria melhor adicionar autenticação adicional aqui.
-    """
-    try:
-        result = await generate_api_key(
-            name=api_key_request.name,
-            expires_days=api_key_request.expires_days,
-            allowed_ips=api_key_request.allowed_ips
-        )
-        return result
-    except Exception as e:
-        logger.error(f"Erro ao criar API Key: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.get("/admin/api-keys")
-async def list_keys(request: Request, active_only: bool = False, _: bool = Depends(verify_admin_access)):
-    """
-    Lista todas as API Keys.
-    
-    Este endpoint está protegido e só pode ser acessado de IPs autorizados.
-    """
-    try:
-        keys = await get_api_keys(active_only)
-        return {"keys": keys, "count": len(keys)}
-    except Exception as e:
-        logger.error(f"Erro ao listar API Keys: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-@app.post("/admin/api-keys/revoke")
-async def revoke_key(request: Request, revoke_request: RevokeRequest, _: bool = Depends(verify_admin_access)):
-    """
-    Revoga (desativa) uma API Key.
-    
-    Este endpoint está protegido e só pode ser acessado de IPs autorizados.
-    """
-    try:
-        success = await revoke_api_key(revoke_request.key_id)
-        if not success:
-            raise HTTPException(status_code=404, detail="API Key não encontrada")
-        return {"message": "API Key revogada com sucesso"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Erro ao revogar API Key: {str(e)}")
-        raise HTTPException(status_code=500, detail=str(e))
+# NOTA: API Key management endpoints have been moved to a separate service: api-keys-manager
+# Only endpoints related to transcription remain in this service
 
 if __name__ == "__main__":
     # Obter a porta da variável de ambiente API_PORT ou usar 8002 como padrão

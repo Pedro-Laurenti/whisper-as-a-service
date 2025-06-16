@@ -1,8 +1,6 @@
 import os
-import secrets
 import hashlib
 from typing import List, Dict, Any, Optional
-import asyncpg
 import datetime
 from ipaddress import ip_address, ip_network
 from dotenv import load_dotenv
@@ -15,49 +13,6 @@ load_dotenv()
 def hash_api_key(key: str) -> str:
     """Cria um hash da API Key para armazenamento seguro."""
     return hashlib.sha256(key.encode()).hexdigest()
-
-async def generate_api_key(name: str, expires_days: int = 365, allowed_ips: Optional[List[str]] = None) -> Dict[str, Any]:
-    """
-    Gera uma nova API Key e a armazena no banco de dados.
-    
-    Args:
-        name: Nome descritivo para identificar a API Key
-        expires_days: Validade em dias
-        allowed_ips: Lista opcional de IPs ou CIDRs com permissão para usar esta chave
-    
-    Returns:
-        Dicionário com informações sobre a API Key gerada
-    """
-    # Gera uma chave aleatória de 32 bytes (64 caracteres em hex)
-    api_key = secrets.token_hex(32)
-    key_hash = hash_api_key(api_key)
-    
-    # Calcula a data de expiração
-    expires_at = datetime.datetime.now() + datetime.timedelta(days=expires_days) if expires_days else None
-    
-    # Insere no banco de dados
-    conn = await get_db_conn()
-    try:
-        result = await conn.fetchrow(
-            """
-            INSERT INTO api_keys (key_hash, name, expires_at, allowed_ips)
-            VALUES ($1, $2, $3, $4)
-            RETURNING id, name, created_at, expires_at, is_active, allowed_ips
-            """,
-            key_hash, name, expires_at, allowed_ips
-        )
-        
-        return {
-            "id": result["id"],
-            "api_key": api_key,  # Retornamos a chave apenas neste momento; depois só teremos o hash
-            "name": result["name"],
-            "created_at": result["created_at"].isoformat(),
-            "expires_at": result["expires_at"].isoformat() if result["expires_at"] else None,
-            "is_active": result["is_active"],
-            "allowed_ips": result["allowed_ips"]
-        }
-    finally:
-        await conn.close()
 
 async def validate_api_key(api_key: str, client_ip: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
@@ -147,64 +102,8 @@ async def validate_api_key(api_key: str, client_ip: Optional[str] = None) -> Opt
     finally:
         await conn.close()
 
-async def get_api_keys(active_only: bool = False) -> List[Dict[str, Any]]:
-    """
-    Retorna a lista de API Keys cadastradas.
-    
-    Args:
-        active_only: Se True, retorna apenas keys ativas
-    
-    Returns:
-        Lista de API Keys cadastradas
-    """
-    conn = await get_db_conn()
-    try:
-        query = """
-            SELECT id, name, created_at, expires_at, is_active, last_used_at, use_count, allowed_ips
-            FROM api_keys
-        """
-        
-        if active_only:
-            query += " WHERE is_active = TRUE"
-            
-        results = await conn.fetch(query)
-        
-        return [
-            {
-                "id": row["id"],
-                "name": row["name"],
-                "created_at": row["created_at"].isoformat(),
-                "expires_at": row["expires_at"].isoformat() if row["expires_at"] else None,
-                "is_active": row["is_active"],
-                "last_used_at": row["last_used_at"].isoformat() if row["last_used_at"] else None,
-                "use_count": row["use_count"],
-                "allowed_ips": row["allowed_ips"]
-            }
-            for row in results
-        ]
-    finally:
-        await conn.close()
-
-async def revoke_api_key(key_id: int) -> bool:
-    """
-    Revoga (desativa) uma API Key.
-    
-    Args:
-        key_id: ID da API Key a ser revogada
-    
-    Returns:
-        True se a API Key foi revogada com sucesso, False caso contrário
-    """
-    conn = await get_db_conn()
-    try:
-        result = await conn.execute(
-            "UPDATE api_keys SET is_active = FALSE WHERE id = $1",
-            key_id
-        )
-        
-        return "UPDATE 1" in result
-    finally:
-        await conn.close()
+# API Key management functions have been moved to a separate service
+# Only validation functions remain in this file
 
 async def get_api_key(api_key_header: str, request = None) -> str:
     """
