@@ -206,12 +206,13 @@ async def revoke_api_key(key_id: int) -> bool:
     finally:
         await conn.close()
 
-async def get_api_key(api_key_header: str) -> str:
+async def get_api_key(api_key_header: str, request = None) -> str:
     """
     Middleware para FastAPI que valida uma API Key.
     
     Args:
         api_key_header: Valor do cabeçalho X-API-Key
+        request: Request do FastAPI (opcional)
     
     Returns:
         A API Key validada
@@ -219,9 +220,8 @@ async def get_api_key(api_key_header: str) -> str:
     Raises:
         HTTPException: Se a API Key for inválida
     """
-    from fastapi import HTTPException, Request
+    from fastapi import HTTPException
     
-    request = Request.scope.get("root", {}).get("app", {}).get("state", {}).get("request")
     client_ip = None
     if request:
         client_ip = request.client.host

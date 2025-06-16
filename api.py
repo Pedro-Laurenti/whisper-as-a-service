@@ -189,7 +189,33 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
+api_key_header = APIKeyHeader(name="X-API-Key", auto_error=True)
+
+async def validate_api_key_dependency(request: Request, api_key: str = Security(api_key_header)):
+    """
+    Função de dependência para validar a API Key.
+    
+    Args:
+        request: Request do FastAPI
+        api_key: Valor do cabeçalho X-API-Key
+    
+    Returns:
+        A API Key validada
+    
+    Raises:
+        HTTPException: Se a API Key for inválida ou não for fornecida
+    """
+    # O auto_error=True já garante que api_key não seja None
+    # mas vamos verificar por garantia
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="API Key não fornecida. Inclua um cabeçalho 'X-API-Key' com uma chave válida.",
+            headers={"WWW-Authenticate": "ApiKey"},
+        )
+    
+    # Valida a API Key usando a função existente
+    return await get_api_key(api_key, request)
 
 class TranscriptionRequest(BaseModel):
     idioma: Optional[str] = None
@@ -212,7 +238,7 @@ async def transcribe(
     request: Request,
     file: Optional[UploadFile] = File(None),
     idioma: Optional[str] = Form(None),
-    api_key: str = Security(api_key_header)
+    api_key: str = Depends(validate_api_key_dependency)
 ):
     """
     Executa uma transcrição síncrona (bloqueante) e retorna os resultados diretamente.
@@ -299,7 +325,7 @@ async def transcribe_async(
     request: Request,
     file: Optional[UploadFile] = File(None),
     idioma: Optional[str] = Form(None),
-    api_key: str = Security(api_key_header)
+    api_key: str = Depends(validate_api_key_dependency)
 ):
     """
     Adiciona um arquivo de áudio à fila de processamento para ser transcrito de forma assíncrona.
@@ -381,7 +407,7 @@ async def transcribe_async(
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/transcribe/status/{transcricao_id}")
-async def get_transcribe_status(transcricao_id: int, api_key: str = Security(api_key_header)):
+async def get_transcribe_status(transcricao_id: int, request: Request, api_key: str = Depends(validate_api_key_dependency)):
     """
     Verifica o status de uma transcrição assíncrona pelo ID.
     Retorna detalhes sobre o progresso e conclusão da transcrição.
@@ -397,9 +423,28 @@ async def get_transcribe_status(transcricao_id: int, api_key: str = Security(api
         logger.error(f"Erro ao verificar status da transcrição: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
+# Adicionando verificação de IP de administração
+async def verify_admin_access(request: Request):
+    """
+    Verifica se a solicitação tem acesso de administração.
+    Pode ser expandido para incluir autenticação adicional.
+    """
+    # Lista de IPs permitidos para acesso administrativo
+    allowed_admin_ips = os.getenv("ADMIN_ALLOWED_IPS", "127.0.0.1,::1").split(",")
+    client_ip = request.client.host
+    
+    # Verifica se o IP do cliente está na lista de IPs permitidos
+    if client_ip not in [ip.strip() for ip in allowed_admin_ips]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Acesso negado. IP não autorizado para acesso administrativo."
+        )
+    
+    return True
+
 # Endpoints para gerenciar API Keys (com proteção especial)
 @app.post("/admin/api-keys", status_code=status.HTTP_201_CREATED)
-async def create_key(request: APIKeyRequest):
+async def create_key(request: Request, api_key_request: APIKeyRequest, _: bool = Depends(verify_admin_access)):
     """
     Cria uma nova API Key.
     
@@ -408,9 +453,9 @@ async def create_key(request: APIKeyRequest):
     """
     try:
         result = await generate_api_key(
-            name=request.name,
-            expires_days=request.expires_days,
-            allowed_ips=request.allowed_ips
+            name=api_key_request.name,
+            expires_days=api_key_request.expires_days,
+            allowed_ips=api_key_request.allowed_ips
         )
         return result
     except Exception as e:
@@ -418,12 +463,11 @@ async def create_key(request: APIKeyRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/admin/api-keys")
-async def list_keys(active_only: bool = False):
+async def list_keys(request: Request, active_only: bool = False, _: bool = Depends(verify_admin_access)):
     """
     Lista todas as API Keys.
     
-    Este endpoint deve ser protegido por senha ou estar em uma rede segura.
-    Em um ambiente de produção, seria melhor adicionar autenticação adicional aqui.
+    Este endpoint está protegido e só pode ser acessado de IPs autorizados.
     """
     try:
         keys = await get_api_keys(active_only)
@@ -433,15 +477,14 @@ async def list_keys(active_only: bool = False):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.post("/admin/api-keys/revoke")
-async def revoke_key(request: RevokeRequest):
+async def revoke_key(request: Request, revoke_request: RevokeRequest, _: bool = Depends(verify_admin_access)):
     """
     Revoga (desativa) uma API Key.
     
-    Este endpoint deve ser protegido por senha ou estar em uma rede segura.
-    Em um ambiente de produção, seria melhor adicionar autenticação adicional aqui.
+    Este endpoint está protegido e só pode ser acessado de IPs autorizados.
     """
     try:
-        success = await revoke_api_key(request.key_id)
+        success = await revoke_api_key(revoke_request.key_id)
         if not success:
             raise HTTPException(status_code=404, detail="API Key não encontrada")
         return {"message": "API Key revogada com sucesso"}
