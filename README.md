@@ -87,3 +87,14 @@ Substitua PORTA pela porta configurada na variável API_PORT no arquivo .env
 - A API Key é gerada automaticamente na primeira inicialização e mostrada nos logs do contêiner.
 - Os arquivos de áudio são armazenados no diretório `/uploads` que está mapeado como um volume.
 - O banco de dados deve ser criado previamente antes de executar o contêiner.
+- Um worker de limpeza executa automaticamente a cada 24 horas para remover arquivos de áudio com mais de 1 dia de idade da pasta `/uploads`.
+
+## Worker de Limpeza
+
+O sistema possui um worker automático que executa as seguintes funções:
+
+- Verifica e remove arquivos de áudio com mais de 1 dia na pasta de uploads
+- Executa automaticamente a cada 24 horas
+- Registra os arquivos removidos nos logs do sistema
+
+Esta funcionalidade ajuda a manter o uso de disco controlado e limpar arquivos de áudio temporários desnecessários.

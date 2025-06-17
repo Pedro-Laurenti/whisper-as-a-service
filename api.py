@@ -14,6 +14,7 @@ from src.queue_processor import (
 from src.security import (
     get_api_key
 )
+from src.cleanup_worker import start_cleanup_worker
 from contextlib import asynccontextmanager
 import os
 import base64
@@ -141,6 +142,11 @@ async def lifespan(app: FastAPI):
     
     # Iniciar o processador de fila
     await start_queue_processor()
+    
+    # Iniciar o worker de limpeza de arquivos (executa a cada 24 horas)
+    logger.info("Iniciando worker de limpeza de arquivos antigos...")
+    await start_cleanup_worker(interval_hours=24)
+    logger.info("Worker de limpeza iniciado com sucesso!")
     
     # NOTA: A criação de API Keys agora é gerenciada pelo serviço separado "api-keys-manager"
     # Se precisar criar uma API Key, use o serviço dedicado
