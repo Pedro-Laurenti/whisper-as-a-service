@@ -80,14 +80,16 @@ async def salvar_arquivo_audio(audio_bytes: bytes, nome_arquivo: str) -> str:
     
     Args:
         audio_bytes: Os bytes do arquivo de áudio
-        nome_arquivo: Nome do arquivo
+        nome_arquivo: Nome do arquivo usado apenas para a extensão
         
     Returns:
         Caminho do arquivo salvo
     """
     # Cria um caminho único para o arquivo
     timestamp = datetime.datetime.now().strftime("%Y%m%d%H%M%S")
-    nome_arquivo_seguro = f"{timestamp}_{nome_arquivo}"
+    # Extrai a extensão do nome do arquivo original
+    extensao = os.path.splitext(nome_arquivo)[1] if '.' in nome_arquivo else '.audio'
+    nome_arquivo_seguro = f"{timestamp}{extensao}"
     caminho_arquivo = os.path.join(UPLOAD_DIR, nome_arquivo_seguro)
     
     # Salva o arquivo
@@ -96,15 +98,14 @@ async def salvar_arquivo_audio(audio_bytes: bytes, nome_arquivo: str) -> str:
     
     return caminho_arquivo
 
-async def enqueue_transcription(audio_bytes: bytes, nome_arquivo: str, idioma: Optional[str] = None, api_key_id: Optional[int] = None) -> Dict[str, Any]:
+async def enqueue_transcription(audio_bytes: bytes, nome_arquivo: str, idioma: Optional[str] = 'pt') -> Dict[str, Any]:
     """
     Adiciona uma transcrição à fila para processamento.
     
     Args:
         audio_bytes: Os bytes do arquivo de áudio
-        nome_arquivo: Nome do arquivo
-        idioma: Idioma do áudio (opcional)
-        api_key_id: ID da API Key usada (opcional)
+        nome_arquivo: Nome do arquivo (usado apenas para manter a extensão)
+        idioma: Idioma do áudio (opcional, padrão é 'pt')
     
     Returns:
         Informações sobre a transcrição enfileirada
@@ -117,16 +118,20 @@ async def enqueue_transcription(audio_bytes: bytes, nome_arquivo: str, idioma: O
     try:
         result = await conn.fetchrow(
             """
-            INSERT INTO transcricoes (nome_arquivo, caminho_arquivo, idioma, status, api_key_id)
-            VALUES ($1, $2, $3, 'waiting', $4)
-            RETURNING id, nome_arquivo, idioma, status, data_envio
+            INSERT INTO transcricoes (caminho_arquivo, idioma, status)
+            VALUES ($1, $2, 'waiting')
+            RETURNING id, caminho_arquivo, idioma, status, data_envio
             """,
-            nome_arquivo, caminho_arquivo, idioma, api_key_id
+            caminho_arquivo, idioma
         )
+        
+        # Extrai apenas o nome do arquivo do caminho para retornar na resposta
+        nome_arquivo_extraido = os.path.basename(caminho_arquivo)
         
         return {
             "id": result["id"],
-            "nome_arquivo": result["nome_arquivo"],
+            "caminho_arquivo": result["caminho_arquivo"],
+            "nome_arquivo": nome_arquivo_extraido,  # Apenas para compatibilidade na resposta
             "idioma": result["idioma"],
             "status": result["status"],
             "data_envio": result["data_envio"].isoformat(),
@@ -135,14 +140,14 @@ async def enqueue_transcription(audio_bytes: bytes, nome_arquivo: str, idioma: O
     finally:
         await conn.close()
 
-async def execute_sync_transcription(audio_bytes: bytes, nome_arquivo: str, idioma: Optional[str] = None) -> Dict[str, Any]:
+async def execute_sync_transcription(audio_bytes: bytes, nome_arquivo: str, idioma: Optional[str] = 'pt') -> Dict[str, Any]:
     """
     Executa uma transcrição de forma síncrona.
     
     Args:
         audio_bytes: Os bytes do arquivo de áudio
-        nome_arquivo: Nome do arquivo
-        idioma: Idioma do áudio (opcional)
+        nome_arquivo: Nome do arquivo (usado apenas para referência de registro)
+        idioma: Idioma do áudio (opcional, padrão 'pt')
         
     Returns:
         Resultados da transcrição
@@ -177,7 +182,7 @@ async def execute_sync_transcription(audio_bytes: bytes, nome_arquivo: str, idio
         )
         
         return {
-            "nome_arquivo": nome_arquivo,
+            "nome_arquivo": os.path.basename(temp_path),  # Nome derivado do caminho temporário
             "idioma_detectado": result.get("language"),
             "texto": result.get("text"),
             "duracao": result.get("duration", 0),
@@ -213,7 +218,7 @@ async def processa_transcrição(transcricao_id: int):
         # Busca a informação da transcrição
         transcricao = await conn.fetchrow(
             """
-            SELECT id, nome_arquivo, caminho_arquivo, idioma
+            SELECT id, caminho_arquivo, idioma
             FROM transcricoes
             WHERE id = $1 AND status = 'waiting'
             """,
@@ -277,7 +282,7 @@ async def processa_transcrição(transcricao_id: int):
                 await conn.execute(
                     """
                     UPDATE transcricoes
-                    SET status = 'concluido',
+                    SET status = 'done',
                         texto = $1,
                         idioma = $2,
                         duracao = $3
@@ -331,7 +336,7 @@ async def get_transcription_status(transcricao_id: int) -> Dict[str, Any]:
         # Busca a informação da transcrição
         result = await conn.fetchrow(
             """
-            SELECT id, nome_arquivo, caminho_arquivo, idioma, status, data_envio, data_processamento, duracao, texto
+            SELECT id, caminho_arquivo, idioma, status, data_envio, data_processamento, duracao, texto
             FROM transcricoes
             WHERE id = $1
             """,
@@ -341,9 +346,13 @@ async def get_transcription_status(transcricao_id: int) -> Dict[str, Any]:
         if not result:
             raise ValueError(f"Transcrição ID {transcricao_id} não encontrada")
         
+        # Extrai o nome do arquivo do caminho para manter compatibilidade na resposta
+        nome_arquivo = os.path.basename(result["caminho_arquivo"])
+        
         resposta = {
             "id": result["id"],
-            "nome_arquivo": result["nome_arquivo"],
+            "caminho_arquivo": result["caminho_arquivo"],
+            "nome_arquivo": nome_arquivo,  # Adicionado para compatibilidade
             "idioma": result["idioma"],
             "status": result["status"],
             "data_envio": result["data_envio"].isoformat(),
@@ -352,7 +361,7 @@ async def get_transcription_status(transcricao_id: int) -> Dict[str, Any]:
         }
         
         # Inclui o texto apenas se a transcrição estiver concluída
-        if result["status"] == "concluido":
+        if result["status"] == "done":
             resposta["texto"] = result["texto"]
         
         return resposta
