@@ -58,16 +58,7 @@ async def validate_api_key(api_key: str, client_ip: Optional[str] = None) -> Opt
             )
             return None
 
-        # Atualiza as estatísticas de uso
-        await conn.execute(
-            """
-            UPDATE api_keys SET 
-                last_used_at = NOW(),
-            WHERE id = $1
-            """,
-            result["id"]
-        )
-        
+        # API Key válida - retorna as informações
         return {
             "id": result["id"],
             "name": result["name"],
