@@ -35,7 +35,7 @@ async def validate_api_key(api_key: str, client_ip: Optional[str] = None) -> Opt
         # Busca a API Key e verifica se é válida
         result = await conn.fetchrow(
             """
-            SELECT id, name, created_at, expires_at, is_active, allowed_ips
+            SELECT id, name, created_at, expires_at, is_active
             FROM api_keys
             WHERE key_hash = $1
             """,
@@ -57,28 +57,7 @@ async def validate_api_key(api_key: str, client_ip: Optional[str] = None) -> Opt
                 result["id"]
             )
             return None
-            
-        # Verifica as restrições de IP, se houver
-        if result["allowed_ips"] and client_ip:
-            client_ip_obj = ip_address(client_ip)
-            ip_allowed = False
-            
-            for allowed_ip in result["allowed_ips"]:
-                # Verifica se é um IP único ou uma rede CIDR
-                if "/" in allowed_ip:
-                    # É uma rede CIDR
-                    if client_ip_obj in ip_network(allowed_ip, strict=False):
-                        ip_allowed = True
-                        break
-                else:
-                    # É um IP único
-                    if client_ip == allowed_ip:
-                        ip_allowed = True
-                        break
-                        
-            if not ip_allowed:
-                return None
-        
+
         # Atualiza as estatísticas de uso
         await conn.execute(
             """
@@ -94,8 +73,7 @@ async def validate_api_key(api_key: str, client_ip: Optional[str] = None) -> Opt
             "name": result["name"],
             "created_at": result["created_at"].isoformat(),
             "expires_at": result["expires_at"].isoformat() if result["expires_at"] else None,
-            "is_active": result["is_active"],
-            "allowed_ips": result["allowed_ips"]
+            "is_active": result["is_active"]
         }
     finally:
         await conn.close()
