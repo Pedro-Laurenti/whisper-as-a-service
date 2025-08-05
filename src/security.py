@@ -35,7 +35,7 @@ async def validate_api_key(api_key: str, client_ip: Optional[str] = None) -> Opt
         # Busca a API Key e verifica se é válida
         result = await conn.fetchrow(
             """
-            SELECT id, name, created_at, expires_at, is_active, use_count, allowed_ips
+            SELECT id, name, created_at, expires_at, is_active, allowed_ips
             FROM api_keys
             WHERE key_hash = $1
             """,
@@ -84,7 +84,6 @@ async def validate_api_key(api_key: str, client_ip: Optional[str] = None) -> Opt
             """
             UPDATE api_keys SET 
                 last_used_at = NOW(),
-                use_count = use_count + 1
             WHERE id = $1
             """,
             result["id"]
@@ -96,7 +95,6 @@ async def validate_api_key(api_key: str, client_ip: Optional[str] = None) -> Opt
             "created_at": result["created_at"].isoformat(),
             "expires_at": result["expires_at"].isoformat() if result["expires_at"] else None,
             "is_active": result["is_active"],
-            "use_count": result["use_count"],
             "allowed_ips": result["allowed_ips"]
         }
     finally:
